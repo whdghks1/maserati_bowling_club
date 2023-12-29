@@ -1,0 +1,53 @@
+/* MainPage.module.css */
+
+.mainPage {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+  
+  .centerContent {
+    text-align: center;
+  }
+
+  .navigation {
+    display: flex;
+    justify-content: center;
+    margin-top: 20px;
+  }
+
+  .contentWrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+  
+  .centerContent {
+    text-align: center;
+  }
+  
+  .imageWrapper {
+    margin-bottom: 20px;
+  }
+  
+  .buttonWrapper {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+  }
+  
+  .button {
+    padding: 10px 20px;
+    background-color: #007bff;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 4px;
+    transition: background-color 0.3s ease;
+    display: inline-block;
+  }
+  
+  .button:hover {
+    background-color: #0056b3;
+  }
