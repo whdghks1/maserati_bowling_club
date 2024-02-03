@@ -94,7 +94,7 @@ export default function PairingPage() {
               </div>
             )}
 
-            {remainder.length > 0 && (
+            {pairs.length > 0 && (
               <div>
                 <h2 className={`${styles.sectionTitle} ${loading ? styles.blurred : ''}`}>팀</h2>
                 {pairs.map((pair, index) => (
@@ -102,6 +102,10 @@ export default function PairingPage() {
                     <p className={styles.pairText}>팀 {index + 1}: {pair.join(', ')}</p>
                   </div>
                 ))}
+              </div>
+            )}
+            {remainder.length > 0 && (
+              <div>
                 <div className={styles.pairSection}>
                   <h2 className={styles.sectionTitle}>남는 인원</h2>
                   <p className={styles.remainderText}>{remainder.join(', ')}</p>
