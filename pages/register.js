@@ -17,7 +17,8 @@ const Register = () => {
                 phone,
                 email,
                 gender,
-                birthdate
+                birthdate,
+                password
             });
             alert(response.data);
         } catch (error) {
@@ -54,6 +55,10 @@ const Register = () => {
                 <div>
                     <label>Birthdate:</label>
                     <input type="date" value={birthdate} onChange={(e) => setBirthdate(e.target.value)} required />
+                </div>
+                <div>
+                    <label>Password:</label>
+                    <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
                 </div>
                 <button type="submit">Register</button>
             </form>
