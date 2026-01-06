@@ -9,10 +9,6 @@ export default function MainPage() {
     <div className={styles.mainPage}>
       <div className={styles.contentWrapper}>
         <div className={styles.centerContent}>
-          {/* 이미지 추가 */}
-          <div className={styles.imageWrapper}>
-            <Image src="/image/logo.jpeg" alt="Logo" width={200} height={200} />
-          </div>
           {/* 버튼 */}
           <div className={styles.buttonWrapper}>
             <Link href="/team">
@@ -20,6 +16,12 @@ export default function MainPage() {
             </Link>
             <Link href="/mack">
               <div className={styles.button}>막뽑기</div>
+            </Link>
+            <Link href="/record">
+              <div className={styles.button}>기록</div>
+            </Link>
+            <Link href="/monthly">
+              <div className={styles.button}>월간보고서</div>
             </Link>
           </div>
         </div>
