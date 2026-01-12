@@ -1,9 +1,29 @@
-// pages/team.js
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import styles from "../src/TeamPage.module.css";
 
-// Fisher–Yates
-function shuffle(arr) {
+/**
+ * TODO(나중에): DB에서 불러오면 됨
+ * 지금은 임시로 하드코딩. (원하면 빈 배열로 두고, 아래 input으로 직접 추가하는 UI도 만들 수 있음)
+ */
+const ALL_MEMBERS = [
+  "박종환", "김민수", "김진우", "문현경", "김지영", "최종서", "김진규", "정유나", "박진종", "박지환", "박정환", "김수빈", "이건무", "유희선", "박정우", "정미라",
+  "김선동", "박원주", "정승민","유병진","홍정화","강하람","길재민","최경원","김예권","김우림","조성우","류예진","박성준","정들림","서영제","박기현","안대영","김기혁","조윤형","박태원","김미경"
+,"최예빈","임상균","전성민","유병능","박정선","오용석","김준규","이창훈","장인경","김미현","장태진","황석주","김동의","온소정","이성룡","조세훈","김태성","남보라","임형택","양승리"];
+
+function uniqClean(arr) {
+  const seen = new Set();
+  const out = [];
+  for (const x of arr) {
+    const v = String(x || "").trim();
+    if (!v) continue;
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
+function fisherYates(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -12,282 +32,292 @@ function shuffle(arr) {
   return a;
 }
 
-function pickRandomIndex(n) {
-  return Math.floor(Math.random() * n);
-}
-
 /**
- * participants: [{ id, name, level, average, ... }]
- * seed1Ids: number[]  (팀 수를 결정하는 1시드 참가자 IDs)
+ * seedPools: { seedKey: [names...] }  (seed1은 팀장)
+ * teamCount: seed1(팀장) 수
  *
- * 팀 구성:
- * - teamCount = seed1Ids.length
- * - 각 팀은 { members: [] }
- * - 1시드부터 각 팀에 1명씩 배치
- * - 그 다음 레벨(2..n)별로 팀에 1명씩 round-robin 배치 (가능한 한 같은 레벨 중복 없이)
- * - 어떤 레벨이 teamCount보다 많으면 남는 애들은 랜덤 팀에 추가
+ * 규칙:
+ * - 팀 수 = 1시드(팀장) 수
+ * - 1시드는 각 팀의 leader
+ * - 나머지 시드는 가능한 한 "한 팀에 같은 시드 1명" 원칙으로 round-robin 배치
+ * - 어떤 시드 인원이 팀 수보다 많으면: 초과분은 랜덤 팀에 추가 배정(같은 시드 중복 허용)
  */
-function buildTeamsBySeeds(participants, seed1Ids) {
-  const teamCount = seed1Ids.length;
-  if (teamCount <= 0) return [];
+function buildTeams(seedPools, teamCount) {
+  const seedKeys = Object.keys(seedPools)
+    .sort((a, b) => Number(a.replace("seed", "")) - Number(b.replace("seed", "")));
 
-  const byId = new Map(participants.map((p) => [p.id, p]));
-
-  const seed1 = seed1Ids.map((id) => byId.get(id)).filter(Boolean);
-  const others = participants.filter((p) => !seed1Ids.includes(p.id));
-
-  // 레벨별 그룹핑 (level=시드)
-  const bucket = new Map();
-  for (const p of others) {
-    const k = p.level ?? 0;
-    if (!bucket.has(k)) bucket.set(k, []);
-    bucket.get(k).push(p);
-  }
-
-  // 레벨 오름차순(= 2시드부터)로 처리
-  const seedLevels = Array.from(bucket.keys()).sort((a, b) => a - b);
-
-  const teams = Array.from({ length: teamCount }, (_, i) => ({
-    teamNo: i + 1,
+  const leaders = seedPools.seed1 || [];
+  const teams = leaders.slice(0, teamCount).map((leader) => ({
+    leader,
     members: [],
-    seedLevelsInTeam: new Set(),
+    seeds: { seed1: leader },
   }));
 
-  // 1시드 배치 (팀당 1명)
-  shuffle(seed1).forEach((p, idx) => {
-    const t = teams[idx % teamCount];
-    t.members.push(p);
-    t.seedLevelsInTeam.add(p.level);
-  });
+  // seed2+ 배정
+  for (const key of seedKeys) {
+    if (key === "seed1") continue;
+    const pool = seedPools[key] || [];
+    if (!pool.length) continue;
 
-  // 2시드부터 순차 배치
-  for (const lvl of seedLevels) {
-    const list = shuffle(bucket.get(lvl) || []);
+    // 1) 한 팀에 1명씩 최대 teamCount까지 round-robin
+    const firstBatch = pool.slice(0, teamCount);
+    const rest = pool.slice(teamCount);
 
-    // 먼저 “중복 레벨 없이” round-robin으로 가능한 만큼 배치
-    let cursor = 0;
-    for (const p of list) {
-      // 중복 레벨이 없는 팀을 찾는다
-      let placed = false;
-      for (let tries = 0; tries < teamCount; tries++) {
-        const t = teams[(cursor + tries) % teamCount];
-        if (!t.seedLevelsInTeam.has(lvl)) {
-          t.members.push(p);
-          t.seedLevelsInTeam.add(lvl);
-          cursor = (cursor + tries + 1) % teamCount;
-          placed = true;
-          break;
-        }
-      }
-      if (!placed) {
-        // 모든 팀이 이미 lvl을 가지고 있으면 랜덤 팀에 추가
-        const t = teams[pickRandomIndex(teamCount)];
-        t.members.push(p);
-      }
+    const shuffledFirst = fisherYates(firstBatch);
+    for (let i = 0; i < shuffledFirst.length; i++) {
+      const t = teams[i];
+      t.members.push(shuffledFirst[i]);
+      t.seeds[key] = (t.seeds[key] || []).concat([shuffledFirst[i]]);
+    }
+
+    // 2) 초과분은 랜덤 팀에 넣음(같은 시드 중복 가능)
+    const shuffledRest = fisherYates(rest);
+    for (const name of shuffledRest) {
+      const idx = Math.floor(Math.random() * teams.length);
+      teams[idx].members.push(name);
+      tSafePushSeed(teams[idx], key, name);
     }
   }
 
-  // 정리: 내부용 필드 제거
-  return teams.map((t) => ({
-    teamNo: t.teamNo,
-    members: t.members,
-  }));
+  return teams;
+
+  function tSafePushSeed(team, key, name) {
+    if (!team.seeds[key]) team.seeds[key] = [];
+    if (Array.isArray(team.seeds[key])) team.seeds[key].push(name);
+    else team.seeds[key] = [name];
+  }
 }
 
 export default function TeamPage() {
-  const [members, setMembers] = useState([]);
-  const [loadingMembers, setLoadingMembers] = useState(true);
-  const [membersErr, setMembersErr] = useState("");
+  // seedInputs: {seed1: [names], seed2: [names] ...}
+  const [seedCount, setSeedCount] = useState(2); // 기본: 1~2시드
+  const [seedPools, setSeedPools] = useState({
+    seed1: [],
+    seed2: [],
+  });
 
-  // 참가자 선택
-  const [selectedIds, setSelectedIds] = useState(new Set());
-
-  // 1시드(팀 수 결정) 직접 선택
-  const [seed1Ids, setSeed1Ids] = useState(new Set());
-
-  // 결과
   const [teams, setTeams] = useState([]);
-  const [making, setMaking] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoadingMembers(true);
-      setMembersErr("");
-      try {
-        const res = await fetch("/api/members");
-        if (!res.ok) throw new Error(`members fetch failed: ${res.status}`);
-        const data = await res.json();
-        if (!cancelled) setMembers(Array.isArray(data) ? data : []);
-      } catch (e) {
-        if (!cancelled) setMembersErr(String(e?.message ?? e));
-      } finally {
-        if (!cancelled) setLoadingMembers(false);
+  // 연출 속도: 빠르게!
+  const TOTAL_ITER = 10;        // 이전 15 → 10 (빠름)
+  const BASE_DELAY = 40;        // 200 → 40
+  const STEP_DELAY = 10;        // 40 → 10 (아주 조금만 느려짐)
+
+  const timerRef = useRef(null);
+
+  const allOptions = useMemo(() => uniqClean(ALL_MEMBERS), []);
+
+  const teamCount = (seedPools.seed1 || []).length;
+
+  function ensureSeedCount(nextCount) {
+    setSeedCount(nextCount);
+
+    setSeedPools((prev) => {
+      const next = { ...prev };
+      for (let i = 1; i <= nextCount; i++) {
+        const k = `seed${i}`;
+        if (!next[k]) next[k] = [];
       }
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const participants = useMemo(() => {
-    return members.filter((m) => selectedIds.has(m.id));
-  }, [members, selectedIds]);
-
-  const seed1List = useMemo(() => {
-    return Array.from(seed1Ids);
-  }, [seed1Ids]);
-
-  function toggleSet(setter, id) {
-    setter((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      // 줄였으면 뒤 시드는 버림(원하면 유지하게 바꿀 수도 있음)
+      for (let i = nextCount + 1; ; i++) {
+        const k = `seed${i}`;
+        if (!(k in next)) break;
+        delete next[k];
+      }
       return next;
     });
   }
 
-  async function makeTeams() {
-    setMsg("");
-    const p = participants;
-    if (p.length === 0) {
-      setMsg("참가자를 선택해주세요.");
+  function togglePick(seedKey, name) {
+    setSeedPools((prev) => {
+      const current = prev[seedKey] || [];
+      const exists = current.includes(name);
+      const nextArr = exists ? current.filter((n) => n !== name) : current.concat(name);
+      return { ...prev, [seedKey]: nextArr };
+    });
+  }
+
+  function clearAll() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setLoading(false);
+    setTeams([]);
+  }
+
+  function startShuffle() {
+    clearAll();
+
+    // 유효성 검사
+    const leaders = seedPools.seed1 || [];
+    if (leaders.length === 0) {
+      alert("1시드(팀장)를 최소 1명 선택해주세요.");
       return;
     }
-    const s1 = seed1List.filter((id) => selectedIds.has(id));
-    if (s1.length === 0) {
-      setMsg("1시드(팀 수 결정)를 선택해주세요.");
-      return;
-    }
-    if (s1.length > p.length) {
-      setMsg("1시드 인원이 참가자 수보다 많을 수 없습니다.");
-      return;
-    }
 
-    setMaking(true);
+    setLoading(true);
 
-    // “돌아가는 연출” (진짜 점점 느려짐) - setTimeout 재귀
-    const total = 14;
-    let step = 0;
+    let counter = 0;
+    const loop = () => {
+      counter++;
 
-    const tick = () => {
-      step += 1;
-      const t = buildTeamsBySeeds(p, s1);
-      setTeams(t);
+      // 매번 seed별로 섞어서 팀 생성 (연출)
+      const shuffledPools = {};
+      for (const [k, v] of Object.entries(seedPools)) {
+        shuffledPools[k] = fisherYates(uniqClean(v));
+      }
 
-      if (step >= total) {
-        setMaking(false);
+      const nextTeams = buildTeams(shuffledPools, teamCount);
+      setTeams(nextTeams);
+
+      if (counter >= TOTAL_ITER) {
+        setLoading(false);
+        timerRef.current = null;
         return;
       }
 
-      const delay = 120 + step * 70 + Math.floor(step * step * 5);
-      setTimeout(tick, delay);
+      const delay = BASE_DELAY + counter * STEP_DELAY; // 점점 살짝 느려짐
+      timerRef.current = setTimeout(loop, delay);
     };
 
-    tick();
+    timerRef.current = setTimeout(loop, BASE_DELAY);
   }
 
-  const disabled = making || loadingMembers;
+  const seedKeys = useMemo(() => {
+    const arr = [];
+    for (let i = 1; i <= seedCount; i++) arr.push(`seed${i}`);
+    return arr;
+  }, [seedCount]);
 
   return (
     <div className={styles.teamPage}>
       <h1 className={styles.pageTitle}>팀 편성 페이지</h1>
 
-      {membersErr && <div style={{ padding: 12, border: "1px solid #f2c2c2", background: "#fff5f5", borderRadius: 8 }}>{membersErr}</div>}
-      {msg && <div style={{ padding: 12, border: "1px solid #f2c2c2", background: "#fff5f5", borderRadius: 8 }}>{msg}</div>}
+      {/* 시드 개수 */}
+      <div style={{ marginBottom: 14, display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ fontWeight: 700 }}>시드 개수:</div>
+        <select
+          value={seedCount}
+          onChange={(e) => ensureSeedCount(Number(e.target.value))}
+          style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc" }}
+          disabled={loading}
+        >
+          {[2, 3, 4, 5, 6].map((n) => (
+            <option key={n} value={n}>{n} 시드</option>
+          ))}
+        </select>
 
-      <div style={{ marginBottom: 10, color: "#666" }}>
-        1) <b>참가자 선택</b> → 2) <b>1시드 선택(팀 수)</b> → 3) 팀 편성
-      </div>
-
-      <div style={{ display: "grid", gap: 14 }}>
-        <section style={{ padding: 12, border: "1px solid #eee", borderRadius: 10 }}>
-          <h2 style={{ margin: 0, fontSize: 18 }}>등록된 인원 (체크해서 참가자 선택)</h2>
-          {loadingMembers ? (
-            <div style={{ padding: 10, color: "#666" }}>불러오는 중...</div>
-          ) : (
-            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
-              {members.map((m) => (
-                <label key={m.id} style={{ display: "flex", gap: 10, alignItems: "center", border: "1px solid #eee", borderRadius: 10, padding: 10 }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(m.id)}
-                    onChange={() => {
-                      toggleSet(setSelectedIds, m.id);
-                      // 참가자에서 빠지면 1시드에서도 자동 제거
-                      setSeed1Ids((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(m.id) && selectedIds.has(m.id)) {
-                          // 이미 선택중이었는데 지금 해제되는 경우 (selectedIds는 아직 prev)
-                          next.delete(m.id);
-                        }
-                        return next;
-                      });
-                    }}
-                  />
-                  <div style={{ lineHeight: 1.25 }}>
-                    <div style={{ fontWeight: 700 }}>{m.name}</div>
-                    <div style={{ color: "#666" }}>{m.level}레벨 · 에버 {m.average}</div>
-                    <div style={{ color: "#999", fontSize: 12 }}>참여 {m.games_played} · 총핀 {m.total_pins}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section style={{ padding: 12, border: "1px solid #eee", borderRadius: 10 }}>
-          <h2 style={{ margin: 0, fontSize: 18 }}>1시드 선택 (팀 수 = 1시드 인원수)</h2>
-          <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 10 }}>
-            {participants.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => toggleSet(setSeed1Ids, p.id)}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 999,
-                  border: seed1Ids.has(p.id) ? "1px solid #111" : "1px solid #ddd",
-                  background: seed1Ids.has(p.id) ? "#111" : "white",
-                  color: seed1Ids.has(p.id) ? "white" : "#111",
-                  cursor: "pointer",
-                }}
-              >
-                {p.name}
-              </button>
-            ))}
-            {participants.length === 0 && <div style={{ color: "#666" }}>참가자를 먼저 선택하세요.</div>}
-          </div>
-        </section>
-
-        <div>
-          <button type="button" disabled={disabled} className={styles.submitButton} onClick={makeTeams}>
-            {making ? "팀 편성 중..." : "팀 편성 시작"}
-          </button>
-          <div style={{ marginTop: 6, color: "#666", fontSize: 13 }}>
-            팀 수는 1시드 인원수로 결정. 같은 레벨이 한 팀에 중복되면(인원이 많을 때) 랜덤으로 들어갈 수 있어.
-          </div>
+        <div style={{ marginLeft: "auto", color: "#666" }}>
+          팀 수 = 1시드(팀장) {teamCount}명
         </div>
-
-        {/* 결과 */}
-        {teams.length > 0 && (
-          <section style={{ padding: 12, border: "1px solid #eee", borderRadius: 10 }}>
-            <h2 style={{ margin: 0, fontSize: 18 }}>팀 결과</h2>
-            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
-              {teams.map((t) => (
-                <div key={t.teamNo} className={making ? styles.teamContainerBlur : styles.teamContainer}>
-                  <h3 className={styles.teamTitle}>팀 {t.teamNo}</h3>
-                  <p className={styles.teamMember}>
-                    {t.members.map((m) => `${m.name}(${m.level})`).join(", ")}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
       </div>
+
+      {/* 시드별 선택 */}
+      <div className={styles.form}>
+        {seedKeys.map((seedKey) => {
+          const isLeaders = seedKey === "seed1";
+          const picked = seedPools[seedKey] || [];
+          return (
+            <div key={seedKey} className={styles.inputLabel} style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <div style={{ fontWeight: 700 }}>
+                  {isLeaders ? "1시드 (팀장)" : `${seedKey.replace("seed", "")}시드`}
+                </div>
+                <div style={{ color: "#666" }}>
+                  선택: {picked.length}명
+                </div>
+              </div>
+
+              {/* 드롭다운(멀티 선택) */}
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <details style={{ width: "100%" }}>
+                  <summary style={{ cursor: "pointer", padding: "10px 12px", border: "1px solid #ccc", borderRadius: 8, background: "#fff" }}>
+                    {isLeaders ? "팀장(1시드) 선택하기" : `${seedKey.replace("seed", "")}시드 인원 선택하기`}
+                  </summary>
+
+                  <div style={{ padding: 10, border: "1px solid #eee", borderRadius: 8, marginTop: 8, background: "#fafafa" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                      {allOptions.map((name) => {
+                        const checked = picked.includes(name);
+                        return (
+                          <label key={name} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => togglePick(seedKey, name)}
+                              disabled={loading}
+                            />
+                            <span>{name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </details>
+
+                {/* 선택된 인원 미리보기 */}
+                {picked.length > 0 && (
+                  <div style={{ width: "100%", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {picked.map((n) => (
+                      <span
+                        key={n}
+                        style={{
+                          border: "1px solid #ddd",
+                          padding: "4px 10px",
+                          borderRadius: 999,
+                          background: "white",
+                        }}
+                      >
+                        {n}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        <button
+          type="button"
+          className={styles.submitButton}
+          onClick={startShuffle}
+          disabled={loading}
+          style={{ opacity: loading ? 0.6 : 1 }}
+        >
+          {loading ? "팀 편성 중..." : "팀 편성 시작"}
+        </button>
+
+        <button
+          type="button"
+          onClick={clearAll}
+          disabled={loading}
+          style={{
+            marginTop: 10,
+            padding: "10px 20px",
+            background: "#eee",
+            border: "1px solid #ddd",
+            borderRadius: 4,
+            cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
+          결과 지우기
+        </button>
+      </div>
+
+      {/* 결과 */}
+      {teams.map((team, index) => (
+        <div
+          key={index}
+          className={loading ? styles.teamContainerBlur : styles.teamContainer}
+        >
+          <h3 className={styles.teamTitle}>팀 {index + 1}</h3>
+          <p className={styles.teamMember}>팀장(1시드): {team.leader}</p>
+          <p className={styles.teamMember}>팀원: {team.members.join(", ")}</p>
+        </div>
+      ))}
     </div>
   );
 }
