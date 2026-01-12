@@ -49,21 +49,18 @@ function buildTeams(seedPools, teamCount) {
 
   for (const key of seedKeys) {
     if (key === "seed1") continue;
+
     const pool = seedPools[key] || [];
     if (!pool.length) continue;
 
-    const firstBatch = pool.slice(0, teamCount);
-    const rest = pool.slice(teamCount);
+    // ✅ 공정 셔플
+    const shuffled = fisherYates(pool);
 
-    const shuffledFirst = fisherYates(firstBatch);
-    for (let i = 0; i < shuffledFirst.length; i++) {
-      teams[i].members.push(shuffledFirst[i]);
-    }
-
-    const shuffledRest = fisherYates(rest);
-    for (const name of shuffledRest) {
-      const idx = Math.floor(Math.random() * teams.length);
-      teams[idx].members.push(name);
+    // ✅ 균등 배분: 라운드로빈(팀별 인원수 차이 최대 1)
+    const start = Math.floor(Math.random() * teamCount); // 매번 시작팀 랜덤(편향 방지)
+    for (let i = 0; i < shuffled.length; i++) {
+      const teamIndex = (start + i) % teamCount;
+      teams[teamIndex].members.push(shuffled[i]);
     }
   }
 
