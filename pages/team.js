@@ -1,19 +1,14 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "../src/TeamPage.module.css";
 
-/**
- * TODO(나중에): DB에서 불러오면 됨
- * 지금은 임시로 하드코딩. (원하면 빈 배열로 두고, 아래 input으로 직접 추가하는 UI도 만들 수 있음)
- */
-const ALL_MEMBERS = [
-  "박종환", "김민수", "김진우", "문현경", "김지영", "최종서", "김진규", "정유나", "박진종", "박지환", "박정환", "김수빈", "이건무", "유희선", "박정우", "정미라",
-  "김선동", "박원주", "정승민","유병진","홍정화","강하람","김예권","김우림","조성우","류예진","변성준","정들림","서영제","박기현","김기혁","조윤형","박태원","김미경"
-,"최예빈","임상균","전성민","유병능","박정선","오용석","김준규","이창훈","장인경","김미현","장태진","황석주","김동의","온소정","이성룡","조세훈","김태성","남보라","임형택","양승리"];
+// localStorage keys
+const LS_SEED_COUNT = "bowling:team:seedCount";
+const LS_SEED_POOLS = "bowling:team:seedPools";
 
 function uniqClean(arr) {
   const seen = new Set();
   const out = [];
-  for (const x of arr) {
+  for (const x of arr || []) {
     const v = String(x || "").trim();
     if (!v) continue;
     if (seen.has(v)) continue;
@@ -33,124 +28,238 @@ function fisherYates(arr) {
 }
 
 /**
- * seedPools: { seedKey: [names...] }  (seed1은 팀장)
+ * seedPools: { seed1: [names], seed2: [names], ... }
  * teamCount: seed1(팀장) 수
  *
  * 규칙:
  * - 팀 수 = 1시드(팀장) 수
- * - 1시드는 각 팀의 leader
- * - 나머지 시드는 가능한 한 "한 팀에 같은 시드 1명" 원칙으로 round-robin 배치
- * - 어떤 시드 인원이 팀 수보다 많으면: 초과분은 랜덤 팀에 추가 배정(같은 시드 중복 허용)
+ * - seed2+는 가능한 "각 팀에 해당 시드 1명" 원칙으로 round-robin
+ * - 해당 시드 인원이 팀 수보다 많으면 초과분은 랜덤 팀에 추가(같은 시드 중복 가능)
  */
 function buildTeams(seedPools, teamCount) {
-  const seedKeys = Object.keys(seedPools)
-    .sort((a, b) => Number(a.replace("seed", "")) - Number(b.replace("seed", "")));
+  const seedKeys = Object.keys(seedPools).sort(
+    (a, b) => Number(a.replace("seed", "")) - Number(b.replace("seed", ""))
+  );
 
   const leaders = seedPools.seed1 || [];
   const teams = leaders.slice(0, teamCount).map((leader) => ({
     leader,
     members: [],
-    seeds: { seed1: leader },
   }));
 
-  // seed2+ 배정
   for (const key of seedKeys) {
     if (key === "seed1") continue;
     const pool = seedPools[key] || [];
     if (!pool.length) continue;
 
-    // 1) 한 팀에 1명씩 최대 teamCount까지 round-robin
     const firstBatch = pool.slice(0, teamCount);
     const rest = pool.slice(teamCount);
 
     const shuffledFirst = fisherYates(firstBatch);
     for (let i = 0; i < shuffledFirst.length; i++) {
-      const t = teams[i];
-      t.members.push(shuffledFirst[i]);
-      t.seeds[key] = (t.seeds[key] || []).concat([shuffledFirst[i]]);
+      teams[i].members.push(shuffledFirst[i]);
     }
 
-    // 2) 초과분은 랜덤 팀에 넣음(같은 시드 중복 가능)
     const shuffledRest = fisherYates(rest);
     for (const name of shuffledRest) {
       const idx = Math.floor(Math.random() * teams.length);
       teams[idx].members.push(name);
-      tSafePushSeed(teams[idx], key, name);
     }
   }
 
   return teams;
+}
 
-  function tSafePushSeed(team, key, name) {
-    if (!team.seeds[key]) team.seeds[key] = [];
-    if (Array.isArray(team.seeds[key])) team.seeds[key].push(name);
-    else team.seeds[key] = [name];
+function makeSeedKeys(count) {
+  const keys = [];
+  for (let i = 1; i <= count; i++) keys.push(`seed${i}`);
+  return keys;
+}
+
+function normalizePools(pools, seedCount) {
+  const next = {};
+  const keys = makeSeedKeys(seedCount);
+  for (const k of keys) next[k] = uniqClean(pools?.[k] || []);
+  return next;
+}
+
+function seedLabel(seedKey) {
+  const n = Number(seedKey.replace("seed", ""));
+  return n === 1 ? "1시드 (팀장)" : `${n}시드`;
+}
+
+function formatTeamsText(teams) {
+  // 카톡/메모에 붙이기 좋게
+  return teams
+    .map((t, i) => {
+      const members = t.members.length ? ` / 팀원: ${t.members.join(", ")}` : "";
+      return `팀 ${i + 1} - 팀장: ${t.leader}${members}`;
+    })
+    .join("\n");
+}
+
+async function copyToClipboard(text) {
+  // modern
+  if (navigator?.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
   }
+  // fallback
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
 }
 
 export default function TeamPage() {
-  // seedInputs: {seed1: [names], seed2: [names] ...}
-  const [seedCount, setSeedCount] = useState(2); // 기본: 1~2시드
-  const [seedPools, setSeedPools] = useState({
-    seed1: [],
-    seed2: [],
-  });
-
-  const [teams, setTeams] = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  // 연출 속도: 빠르게!
-  const TOTAL_ITER = 10;        // 이전 15 → 10 (빠름)
-  const BASE_DELAY = 40;        // 200 → 40
-  const STEP_DELAY = 10;        // 40 → 10 (아주 조금만 느려짐)
+  // 🔥 속도(빠르게)
+  const TOTAL_ITER = 10;
+  const BASE_DELAY = 35;
+  const STEP_DELAY = 8;
 
   const timerRef = useRef(null);
 
-  const allOptions = useMemo(() => uniqClean(ALL_MEMBERS), []);
+  // 멤버 목록(DB)
+  const [members, setMembers] = useState([]);
+  const [membersLoading, setMembersLoading] = useState(true);
+  const [membersError, setMembersError] = useState("");
+
+  // seed state (localStorage 복원)
+  const [seedCount, setSeedCount] = useState(2);
+  const [seedPools, setSeedPools] = useState({ seed1: [], seed2: [] });
+
+  // ✅ 시드별 검색어
+  const [seedSearch, setSeedSearch] = useState({ seed1: "", seed2: "" });
+
+  const [teams, setTeams] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [copiedMsg, setCopiedMsg] = useState("");
 
   const teamCount = (seedPools.seed1 || []).length;
+  const seedKeys = useMemo(() => makeSeedKeys(seedCount), [seedCount]);
+
+  // ✅ “어느 시드에 들어가있는지” 빠르게 찾기 위한 맵
+  // name -> seedKey
+  const nameToSeed = useMemo(() => {
+    const map = new Map();
+    for (const k of Object.keys(seedPools)) {
+      for (const name of seedPools[k] || []) {
+        map.set(name, k);
+      }
+    }
+    return map;
+  }, [seedPools]);
+
+  // 1) DB에서 members 불러오기
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMembers() {
+      setMembersLoading(true);
+      setMembersError("");
+      try {
+        const res = await fetch("/api/members");
+        if (!res.ok) throw new Error(`members fetch failed: ${res.status}`);
+        const data = await res.json();
+        const names = Array.isArray(data) ? data.map((r) => r?.name).filter(Boolean) : [];
+        if (!cancelled) setMembers(uniqClean(names));
+      } catch (e) {
+        if (!cancelled) setMembersError(String(e?.message ?? e));
+      } finally {
+        if (!cancelled) setMembersLoading(false);
+      }
+    }
+
+    loadMembers();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 2) localStorage에서 seedCount / seedPools 복원
+  useEffect(() => {
+    try {
+      const savedCountRaw = localStorage.getItem(LS_SEED_COUNT);
+      const savedPoolsRaw = localStorage.getItem(LS_SEED_POOLS);
+
+      const parsedCount = savedCountRaw ? Number(savedCountRaw) : 2;
+      const nextCount = Number.isFinite(parsedCount) && parsedCount >= 2 ? parsedCount : 2;
+
+      const parsedPools = savedPoolsRaw ? JSON.parse(savedPoolsRaw) : null;
+
+      setSeedCount(nextCount);
+      setSeedPools(normalizePools(parsedPools || {}, nextCount));
+
+      // 검색 상태도 맞춰줌
+      setSeedSearch((prev) => {
+        const next = {};
+        for (const k of makeSeedKeys(nextCount)) next[k] = prev?.[k] ?? "";
+        return next;
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // 3) seedCount/seedPools 변경 시 저장
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SEED_COUNT, String(seedCount));
+      localStorage.setItem(LS_SEED_POOLS, JSON.stringify(seedPools));
+    } catch {
+      // ignore
+    }
+  }, [seedCount, seedPools]);
 
   function ensureSeedCount(nextCount) {
+    clearShuffleOnly();
     setSeedCount(nextCount);
-
-    setSeedPools((prev) => {
-      const next = { ...prev };
-      for (let i = 1; i <= nextCount; i++) {
-        const k = `seed${i}`;
-        if (!next[k]) next[k] = [];
-      }
-      // 줄였으면 뒤 시드는 버림(원하면 유지하게 바꿀 수도 있음)
-      for (let i = nextCount + 1; ; i++) {
-        const k = `seed${i}`;
-        if (!(k in next)) break;
-        delete next[k];
-      }
+    setSeedPools((prev) => normalizePools(prev, nextCount));
+    setSeedSearch((prev) => {
+      const next = {};
+      for (const k of makeSeedKeys(nextCount)) next[k] = prev?.[k] ?? "";
       return next;
     });
   }
 
   function togglePick(seedKey, name) {
     setSeedPools((prev) => {
-      const current = prev[seedKey] || [];
-      const exists = current.includes(name);
-      const nextArr = exists ? current.filter((n) => n !== name) : current.concat(name);
-      return { ...prev, [seedKey]: nextArr };
+      const next = { ...prev };
+      const current = next[seedKey] || [];
+      const has = current.includes(name);
+
+      if (has) {
+        next[seedKey] = current.filter((n) => n !== name);
+        return next;
+      }
+
+      // ✅ 체크 시: 다른 모든 시드에서 제거 후 현재 시드에만 추가 (중복 방지)
+      for (const k of Object.keys(next)) {
+        next[k] = (next[k] || []).filter((n) => n !== name);
+      }
+      next[seedKey] = uniqClean([...(next[seedKey] || []), name]);
+      return next;
     });
   }
 
-  function clearAll() {
+  function clearShuffleOnly() {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
     setLoading(false);
     setTeams([]);
+    setCopiedMsg("");
   }
 
   function startShuffle() {
-    clearAll();
+    clearShuffleOnly();
 
-    // 유효성 검사
     const leaders = seedPools.seed1 || [];
     if (leaders.length === 0) {
       alert("1시드(팀장)를 최소 1명 선택해주세요.");
@@ -163,13 +272,13 @@ export default function TeamPage() {
     const loop = () => {
       counter++;
 
-      // 매번 seed별로 섞어서 팀 생성 (연출)
+      // 매번 seed별로 셔플해서 연출
       const shuffledPools = {};
       for (const [k, v] of Object.entries(seedPools)) {
         shuffledPools[k] = fisherYates(uniqClean(v));
       }
 
-      const nextTeams = buildTeams(shuffledPools, teamCount);
+      const nextTeams = buildTeams(shuffledPools, leaders.length);
       setTeams(nextTeams);
 
       if (counter >= TOTAL_ITER) {
@@ -178,24 +287,47 @@ export default function TeamPage() {
         return;
       }
 
-      const delay = BASE_DELAY + counter * STEP_DELAY; // 점점 살짝 느려짐
+      const delay = BASE_DELAY + counter * STEP_DELAY; // 점점 느려지게
       timerRef.current = setTimeout(loop, delay);
     };
 
     timerRef.current = setTimeout(loop, BASE_DELAY);
   }
 
-  const seedKeys = useMemo(() => {
-    const arr = [];
-    for (let i = 1; i <= seedCount; i++) arr.push(`seed${i}`);
-    return arr;
-  }, [seedCount]);
+  function resetSelections() {
+    clearShuffleOnly();
+    setSeedPools(normalizePools({}, seedCount));
+  }
+
+  async function onCopyTeams() {
+    try {
+      const text = formatTeamsText(teams);
+      await copyToClipboard(text);
+      setCopiedMsg("복사 완료! (카톡/메모에 붙여넣기 가능)");
+      setTimeout(() => setCopiedMsg(""), 1800);
+    } catch (e) {
+      alert("복사 실패: " + String(e?.message ?? e));
+    }
+  }
 
   return (
     <div className={styles.teamPage}>
       <h1 className={styles.pageTitle}>팀 편성 페이지</h1>
 
-      {/* 시드 개수 */}
+      {membersError && (
+        <div
+          style={{
+            padding: 12,
+            border: "1px solid #f2c2c2",
+            background: "#fff5f5",
+            borderRadius: 8,
+            marginBottom: 12,
+          }}
+        >
+          멤버 불러오기 실패: {membersError}
+        </div>
+      )}
+
       <div style={{ marginBottom: 14, display: "flex", gap: 10, alignItems: "center" }}>
         <div style={{ fontWeight: 700 }}>시드 개수:</div>
         <select
@@ -205,7 +337,9 @@ export default function TeamPage() {
           disabled={loading}
         >
           {[2, 3, 4, 5, 6].map((n) => (
-            <option key={n} value={n}>{n} 시드</option>
+            <option key={n} value={n}>
+              {n} 시드
+            </option>
           ))}
         </select>
 
@@ -214,68 +348,114 @@ export default function TeamPage() {
         </div>
       </div>
 
-      {/* 시드별 선택 */}
       <div className={styles.form}>
         {seedKeys.map((seedKey) => {
           const isLeaders = seedKey === "seed1";
           const picked = seedPools[seedKey] || [];
+
+          const q = (seedSearch[seedKey] || "").trim().toLowerCase();
+          const filteredMembers = q
+            ? members.filter((n) => n.toLowerCase().includes(q))
+            : members;
+
           return (
             <div key={seedKey} className={styles.inputLabel} style={{ marginBottom: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <div style={{ fontWeight: 700 }}>
-                  {isLeaders ? "1시드 (팀장)" : `${seedKey.replace("seed", "")}시드`}
-                </div>
-                <div style={{ color: "#666" }}>
-                  선택: {picked.length}명
-                </div>
+                <div style={{ fontWeight: 700 }}>{seedLabel(seedKey)}</div>
+                <div style={{ color: "#666" }}>선택: {picked.length}명</div>
               </div>
 
-              {/* 드롭다운(멀티 선택) */}
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <details style={{ width: "100%" }}>
-                  <summary style={{ cursor: "pointer", padding: "10px 12px", border: "1px solid #ccc", borderRadius: 8, background: "#fff" }}>
-                    {isLeaders ? "팀장(1시드) 선택하기" : `${seedKey.replace("seed", "")}시드 인원 선택하기`}
-                  </summary>
+              {/* ✅ 검색창 */}
+              <input
+                type="text"
+                placeholder="이름 검색..."
+                value={seedSearch[seedKey] || ""}
+                onChange={(e) => setSeedSearch((prev) => ({ ...prev, [seedKey]: e.target.value }))}
+                disabled={loading || membersLoading}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #ccc",
+                  marginBottom: 8,
+                }}
+              />
 
-                  <div style={{ padding: 10, border: "1px solid #eee", borderRadius: 8, marginTop: 8, background: "#fafafa" }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
-                      {allOptions.map((name) => {
-                        const checked = picked.includes(name);
-                        return (
-                          <label key={name} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => togglePick(seedKey, name)}
-                              disabled={loading}
-                            />
-                            <span>{name}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </details>
+              <details style={{ width: "100%" }}>
+                <summary
+                  style={{
+                    cursor: membersLoading ? "not-allowed" : "pointer",
+                    padding: "10px 12px",
+                    border: "1px solid #ccc",
+                    borderRadius: 8,
+                    background: "#fff",
+                    opacity: membersLoading ? 0.6 : 1,
+                  }}
+                >
+                  {membersLoading
+                    ? "멤버 불러오는 중..."
+                    : isLeaders
+                      ? "팀장(1시드) 선택하기"
+                      : `${seedKey.replace("seed", "")}시드 인원 선택하기`}
+                </summary>
 
-                {/* 선택된 인원 미리보기 */}
-                {picked.length > 0 && (
-                  <div style={{ width: "100%", display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {picked.map((n) => (
-                      <span
-                        key={n}
-                        style={{
-                          border: "1px solid #ddd",
-                          padding: "4px 10px",
-                          borderRadius: 999,
-                          background: "white",
-                        }}
-                      >
-                        {n}
-                      </span>
-                    ))}
+                <div
+                  style={{
+                    padding: 10,
+                    border: "1px solid #eee",
+                    borderRadius: 8,
+                    marginTop: 8,
+                    background: "#fafafa",
+                  }}
+                >
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                    {filteredMembers.map((name) => {
+                      const checked = picked.includes(name);
+
+                      // ✅ 다른 시드에 이미 선택된 사람은 “여기서는 선택 불가(비활성화)”
+                      const alreadySeed = nameToSeed.get(name); // e.g. seed2
+                      const disabledByOtherSeed = alreadySeed && alreadySeed !== seedKey;
+
+                      return (
+                        <label key={name} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => togglePick(seedKey, name)}
+                            disabled={loading || membersLoading || disabledByOtherSeed}
+                          />
+                          <span style={{ opacity: disabledByOtherSeed ? 0.5 : 1 }}>
+                            {name}
+                            {disabledByOtherSeed ? (
+                              <em style={{ marginLeft: 8, color: "#888", fontStyle: "normal" }}>
+                                ({seedLabel(alreadySeed)})
+                              </em>
+                            ) : null}
+                          </span>
+                        </label>
+                      );
+                    })}
                   </div>
-                )}
-              </div>
+                </div>
+              </details>
+
+              {picked.length > 0 && (
+                <div style={{ width: "100%", display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                  {picked.map((n) => (
+                    <span
+                      key={n}
+                      style={{
+                        border: "1px solid #ddd",
+                        padding: "4px 10px",
+                        borderRadius: 999,
+                        background: "white",
+                      }}
+                    >
+                      {n}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}
@@ -284,15 +464,15 @@ export default function TeamPage() {
           type="button"
           className={styles.submitButton}
           onClick={startShuffle}
-          disabled={loading}
-          style={{ opacity: loading ? 0.6 : 1 }}
+          disabled={loading || membersLoading}
+          style={{ opacity: loading || membersLoading ? 0.6 : 1 }}
         >
           {loading ? "팀 편성 중..." : "팀 편성 시작"}
         </button>
 
         <button
           type="button"
-          onClick={clearAll}
+          onClick={clearShuffleOnly}
           disabled={loading}
           style={{
             marginTop: 10,
@@ -305,19 +485,66 @@ export default function TeamPage() {
         >
           결과 지우기
         </button>
+
+        <button
+          type="button"
+          onClick={resetSelections}
+          disabled={loading}
+          style={{
+            marginTop: 10,
+            padding: "10px 20px",
+            background: "white",
+            border: "1px solid #ddd",
+            borderRadius: 4,
+            cursor: loading ? "not-allowed" : "pointer",
+          }}
+        >
+          선택 초기화(시드 선택 전부 비움)
+        </button>
+
+        <div style={{ marginTop: 10, color: "#666", fontSize: 13 }}>
+          ✅ 같은 사람은 하나의 시드에만 선택됩니다(다른 시드에서는 비활성화).<br />
+          ✅ 시드 선택/개수는 자동 저장됩니다(localStorage).
+        </div>
       </div>
 
       {/* 결과 */}
-      {teams.map((team, index) => (
-        <div
-          key={index}
-          className={loading ? styles.teamContainerBlur : styles.teamContainer}
-        >
-          <h3 className={styles.teamTitle}>팀 {index + 1}</h3>
-          <p className={styles.teamMember}>팀장(1시드): {team.leader}</p>
-          <p className={styles.teamMember}>팀원: {team.members.join(", ")}</p>
+      {teams.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            onClick={onCopyTeams}
+            disabled={loading}
+            style={{
+              padding: "10px 20px",
+              background: "#111",
+              color: "white",
+              border: "1px solid #111",
+              borderRadius: 4,
+              cursor: loading ? "not-allowed" : "pointer",
+              width: "100%",
+              marginBottom: 10,
+              opacity: loading ? 0.6 : 1,
+            }}
+          >
+            팀 결과 복사
+          </button>
+
+          {copiedMsg && (
+            <div style={{ padding: 10, borderRadius: 8, background: "#f5fff5", border: "1px solid #c7f2c2", marginBottom: 12 }}>
+              {copiedMsg}
+            </div>
+          )}
+
+          {teams.map((team, index) => (
+            <div key={index} className={loading ? styles.teamContainerBlur : styles.teamContainer}>
+              <h3 className={styles.teamTitle}>팀 {index + 1}</h3>
+              <p className={styles.teamMember}>팀장(1시드): {team.leader}</p>
+              <p className={styles.teamMember}>팀원: {team.members.join(", ")}</p>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }
