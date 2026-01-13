@@ -2,111 +2,189 @@
 import { sql } from "../../../src/db";
 
 export default async function handler(req, res) {
-    if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
-    const { month, name } = req.query; // month: 'YYYY-MM', name optional
-    if (!month) return res.status(400).json({ error: "month is required (YYYY-MM)" });
+  const { month, name } = req.query;
+  if (!month) return res.status(400).json({ error: "month is required (YYYY-MM)" });
 
-    const start = `${month}-01`;
-    const nameParam = (typeof name === "string" && name.trim()) ? name.trim() : null;
+  const monthStr = String(month).trim();
+  if (!/^\d{4}-\d{2}$/.test(monthStr)) {
+    return res.status(400).json({ error: "month format must be YYYY-MM (e.g. 2026-01)" });
+  }
 
-    try {
-        // 1) 요약
-        const summaryRows = await sql`
-      with base_logs as (
-        select d.id, d.user_id, d.log_date, d.pattern_id
-        from daily_logs d
-        join users u on u.id = d.user_id
-        where d.log_date >= ${start}::date
-          and d.log_date < (${start}::date + interval '1 month')::date
-          and (${nameParam}::text is null or u.display_name = ${nameParam})
-      )
-      select
-        (select count(*) from base_logs) as total_days,
-        (select count(*) from games g join base_logs bl on bl.id = g.log_id) as total_games,
-        (select round(avg(g.score)) from games g join base_logs bl on bl.id = g.log_id) as avg_score,
-        (select max(g.score) from games g join base_logs bl on bl.id = g.log_id) as max_score,
-        (select min(g.score) from games g join base_logs bl on bl.id = g.log_id) as min_score,
-        (select count(*) from games g join base_logs bl on bl.id = g.log_id where g.score >= 200) as games_200_plus
-    `;
-        const summary = summaryRows[0];
+  const start = `${monthStr}-01`;
+  const nameParam = typeof name === "string" && name.trim() ? name.trim() : null;
 
-        // 2) 볼링공 TOP
-        const ballsTop = await sql`
-      with base_logs as (
-        select d.id
-        from daily_logs d
-        join users u on u.id = d.user_id
-        where d.log_date >= ${start}::date
-          and d.log_date < (${start}::date + interval '1 month')::date
-          and (${nameParam}::text is null or u.display_name = ${nameParam})
-      )
-      select
-        b.ball_name,
-        count(*) as used_days
-      from daily_balls b
-      join base_logs bl on bl.id = b.log_id
-      group by b.ball_name
-      order by used_days desc, b.ball_name asc
-      limit 10
-    `;
+  try {
+    // 1) 요약
+    const summaryRows = nameParam
+      ? await sql`
+          with base_logs as (
+            select d.id, d.log_date, d.pattern_id
+            from daily_logs d
+            join users u on u.id = d.user_id
+            where d.log_date >= ${start}::date
+              and d.log_date < (${start}::date + interval '1 month')::date
+              and u.display_name = ${nameParam}
+          )
+          select
+            (select count(*) from base_logs) as total_days,
+            (select count(*) from games g join base_logs bl on bl.id = g.log_id) as total_games,
+            (select round(avg(g.score)) from games g join base_logs bl on bl.id = g.log_id) as avg_score,
+            (select max(g.score) from games g join base_logs bl on bl.id = g.log_id) as max_score,
+            (select min(g.score) from games g join base_logs bl on bl.id = g.log_id) as min_score,
+            (select count(*) from games g join base_logs bl on bl.id = g.log_id where g.score >= 200) as games_200_plus
+        `
+      : await sql`
+          with base_logs as (
+            select d.id, d.log_date, d.pattern_id
+            from daily_logs d
+            join users u on u.id = d.user_id
+            where d.log_date >= ${start}::date
+              and d.log_date < (${start}::date + interval '1 month')::date
+          )
+          select
+            (select count(*) from base_logs) as total_days,
+            (select count(*) from games g join base_logs bl on bl.id = g.log_id) as total_games,
+            (select round(avg(g.score)) from games g join base_logs bl on bl.id = g.log_id) as avg_score,
+            (select max(g.score) from games g join base_logs bl on bl.id = g.log_id) as max_score,
+            (select min(g.score) from games g join base_logs bl on bl.id = g.log_id) as min_score,
+            (select count(*) from games g join base_logs bl on bl.id = g.log_id where g.score >= 200) as games_200_plus
+        `;
+    const summary = summaryRows?.[0] ?? null;
 
-        // 3) 패턴별
-        const byPattern = await sql`
-      with base_logs as (
-        select d.id, d.pattern_id
-        from daily_logs d
-        join users u on u.id = d.user_id
-        where d.log_date >= ${start}::date
-          and d.log_date < (${start}::date + interval '1 month')::date
-          and (${nameParam}::text is null or u.display_name = ${nameParam})
-      )
-      select
-        coalesce(p.name, '(미선택)') as pattern_name,
-        count(distinct bl.id) as days,
-        count(g.id) as games,
-        round(avg(g.score)) as avg_score,
-        max(g.score) as max_score,
-        sum(case when g.score >= 200 then 1 else 0 end) as games_200_plus
-      from base_logs bl
-      left join patterns p on p.id = bl.pattern_id
-      left join games g on g.log_id = bl.id
-      group by pattern_name
-      order by games desc, pattern_name asc
-      limit 20
-    `;
+    // 2) 볼링공 TOP
+    const ballsTop = nameParam
+      ? await sql`
+          with base_logs as (
+            select d.id
+            from daily_logs d
+            join users u on u.id = d.user_id
+            where d.log_date >= ${start}::date
+              and d.log_date < (${start}::date + interval '1 month')::date
+              and u.display_name = ${nameParam}
+          )
+          select b.ball_name, count(*) as used_days
+          from daily_balls b
+          join base_logs bl on bl.id = b.log_id
+          group by b.ball_name
+          order by used_days desc, b.ball_name asc
+          limit 10
+        `
+      : await sql`
+          with base_logs as (
+            select d.id
+            from daily_logs d
+            join users u on u.id = d.user_id
+            where d.log_date >= ${start}::date
+              and d.log_date < (${start}::date + interval '1 month')::date
+          )
+          select b.ball_name, count(*) as used_days
+          from daily_balls b
+          join base_logs bl on bl.id = b.log_id
+          group by b.ball_name
+          order by used_days desc, b.ball_name asc
+          limit 10
+        `;
 
-        // 4) 일자별
-        const daily = await sql`
-      with base_logs as (
-        select d.id, d.log_date
-        from daily_logs d
-        join users u on u.id = d.user_id
-        where d.log_date >= ${start}::date
-          and d.log_date < (${start}::date + interval '1 month')::date
-          and (${nameParam}::text is null or u.display_name = ${nameParam})
-      )
-      select
-        bl.log_date,
-        count(g.id) as games,
-        round(avg(g.score)) as avg_score,
-        max(g.score) as max_score
-      from base_logs bl
-      left join games g on g.log_id = bl.id
-      group by bl.log_date
-      order by bl.log_date desc
-    `;
+    // 3) 패턴별
+    const byPattern = nameParam
+      ? await sql`
+          with base_logs as (
+            select d.id, d.pattern_id
+            from daily_logs d
+            join users u on u.id = d.user_id
+            where d.log_date >= ${start}::date
+              and d.log_date < (${start}::date + interval '1 month')::date
+              and u.display_name = ${nameParam}
+          )
+          select
+            coalesce(p.name, '(미선택)') as pattern_name,
+            count(distinct bl.id) as days,
+            count(g.id) as games,
+            round(avg(g.score)) as avg_score,
+            max(g.score) as max_score,
+            sum(case when g.score >= 200 then 1 else 0 end) as games_200_plus
+          from base_logs bl
+          left join patterns p on p.id = bl.pattern_id
+          left join games g on g.log_id = bl.id
+          group by pattern_name
+          order by games desc, pattern_name asc
+          limit 20
+        `
+      : await sql`
+          with base_logs as (
+            select d.id, d.pattern_id
+            from daily_logs d
+            join users u on u.id = d.user_id
+            where d.log_date >= ${start}::date
+              and d.log_date < (${start}::date + interval '1 month')::date
+          )
+          select
+            coalesce(p.name, '(미선택)') as pattern_name,
+            count(distinct bl.id) as days,
+            count(g.id) as games,
+            round(avg(g.score)) as avg_score,
+            max(g.score) as max_score,
+            sum(case when g.score >= 200 then 1 else 0 end) as games_200_plus
+          from base_logs bl
+          left join patterns p on p.id = bl.pattern_id
+          left join games g on g.log_id = bl.id
+          group by pattern_name
+          order by games desc, pattern_name asc
+          limit 20
+        `;
 
-        return res.status(200).json({
-            month,
-            name: nameParam,
-            summary,
-            ballsTop,
-            byPattern,
-            daily,
-        });
-    } catch (e) {
-        console.error(e);
-        return res.status(500).json({ error: "Server error", detail: String(e?.message ?? e) });
-    }
+    // 4) 일자별 (UTC 꼬임 방지: 문자열로)
+    const daily = nameParam
+      ? await sql`
+          with base_logs as (
+            select d.id, d.log_date
+            from daily_logs d
+            join users u on u.id = d.user_id
+            where d.log_date >= ${start}::date
+              and d.log_date < (${start}::date + interval '1 month')::date
+              and u.display_name = ${nameParam}
+          )
+          select
+            to_char(bl.log_date::date, 'YYYY-MM-DD') as log_date,
+            count(g.id) as games,
+            round(avg(g.score)) as avg_score,
+            max(g.score) as max_score
+          from base_logs bl
+          left join games g on g.log_id = bl.id
+          group by bl.log_date
+          order by bl.log_date desc
+        `
+      : await sql`
+          with base_logs as (
+            select d.id, d.log_date
+            from daily_logs d
+            join users u on u.id = d.user_id
+            where d.log_date >= ${start}::date
+              and d.log_date < (${start}::date + interval '1 month')::date
+          )
+          select
+            to_char(bl.log_date::date, 'YYYY-MM-DD') as log_date,
+            count(g.id) as games,
+            round(avg(g.score)) as avg_score,
+            max(g.score) as max_score
+          from base_logs bl
+          left join games g on g.log_id = bl.id
+          group by bl.log_date
+          order by bl.log_date desc
+        `;
+
+    return res.status(200).json({
+      month: monthStr,
+      name: nameParam,
+      summary,
+      ballsTop,
+      byPattern,
+      daily,
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Server error", detail: String(e?.message ?? e) });
+  }
 }

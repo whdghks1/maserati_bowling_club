@@ -52,6 +52,12 @@ export default function MonthlyReportPage() {
             return;
         }
 
+        // ✅ 형식 검증 강화
+        if (!/^\d{4}-\d{2}$/.test(m)) {
+            setErr("month 형식은 YYYY-MM 입니다. 예: 2026-01");
+            return;
+        }
+
         // 검색 조건 확정
         setMonth(m);
         setName(n);
@@ -91,7 +97,10 @@ export default function MonthlyReportPage() {
                             placeholder="예: 홍길동 (비우면 전체)"
                             style={{ padding: 10, borderRadius: 8, border: "1px solid #ccc" }}
                             onKeyDown={(e) => {
-                                if (e.key === "Enter") onSearch();
+                                if (e.key === "Enter") {
+                                    e.preventDefault(); // ✅ 중복 호출 방지
+                                    onSearch();
+                                }
                             }}
                         />
                     </label>
@@ -118,9 +127,16 @@ export default function MonthlyReportPage() {
                     <button
                         type="button"
                         onClick={() => {
+                            setErr("");
                             setNameInput("");
                             // 월은 유지, 이름만 지우고 바로 전체 검색
                             const m = monthInput.trim() || currentMonth();
+
+                            if (!/^\d{4}-\d{2}$/.test(m)) {
+                                setErr("month 형식은 YYYY-MM 입니다. 예: 2026-01");
+                                return;
+                            }
+
                             setMonthInput(m);
                             setMonth(m);
                             setName("");
@@ -132,7 +148,7 @@ export default function MonthlyReportPage() {
                             borderRadius: 10,
                             border: "1px solid #ccc",
                             background: "white",
-                            cursor: "pointer",
+                            cursor: loading ? "not-allowed" : "pointer",
                         }}
                     >
                         전체 보기
@@ -233,7 +249,10 @@ function SimpleTable({ columns, rows, headers }) {
                 <thead>
                     <tr>
                         {columns.map((c) => (
-                            <th key={c} style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid #eee", color: "#666", fontWeight: 600 }}>
+                            <th
+                                key={c}
+                                style={{ textAlign: "left", padding: "8px 10px", borderBottom: "1px solid #eee", color: "#666", fontWeight: 600 }}
+                            >
                                 {headers?.[c] ?? c}
                             </th>
                         ))}
