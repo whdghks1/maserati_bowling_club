@@ -131,10 +131,21 @@ function BungCalendar({ year, monthIndex, calendarDays, onClickDay }) {
                     const dayKey = ymd(dateObj);
                     const raw = calendarDays?.[dayKey] || [];
 
-                    // ✅ 유효 먼저, 이후 시간순
+                    // ✅ 유효벙 -> 비유효벙 -> 정기전(파랑) 순
                     const bungsSorted = [...raw].sort((a, b) => {
-                        if (a.is_valid !== b.is_valid) return a.is_valid ? -1 : 1;
-                        return new Date(a.bung_at) - new Date(b.bung_at);
+                        const rank = (x) => {
+                            if (x.event_type === "bung") return x.is_valid ? 0 : 1;
+                            if (x.event_type === "regular") return 2;
+                            return 9;
+                        };
+
+                        const ra = rank(a), rb = rank(b);
+                        if (ra !== rb) return ra - rb;
+
+                        // 같은 그룹이면 벙은 시간순, 정기전은 그대로
+                        const ta = a.event_type === "bung" ? new Date(a.bung_at).getTime() : 0;
+                        const tb = b.event_type === "bung" ? new Date(b.bung_at).getTime() : 0;
+                        return ta - tb;
                     });
 
                     const maxShow = 2;
@@ -154,37 +165,38 @@ function BungCalendar({ year, monthIndex, calendarDays, onClickDay }) {
 
                             <div className="events">
                                 {show.map((b) => {
-                                    const icon = b.is_valid ? "✓" : "!";
-                                    const time = fmtTime(b.bung_at);
-                                    const title = b.title || ""; // 없으면 빈칸
+                                    const isRegular = b.event_type === "regular";
 
-                                    // ✅ 미리보기는 "A, B…" 형태로 이미 API가 만들어줌(최대 3명 + …)
-                                    // 요구: 2명 + … 로 보이게 -> 프론트에서 한 번 더 줄여줌
-                                    const names = (b.attendee_names_preview || "").split(",").map(s => s.trim()).filter(Boolean);
+                                    const icon = isRegular ? "★" : (b.is_valid ? "✓" : "!");
+                                    const time = isRegular ? "" : fmtTime(b.bung_at);
+                                    const title = b.title || ""; // 정기전은 API에서 "정기전 n회차"로 내려옴
+
+                                    // ✅ 2명 + … 라인
+                                    const preview = String(b.attendee_names_preview || "");
+                                    const names = preview.split(",").map(s => s.trim()).filter(Boolean);
 
                                     let namesLine = "";
                                     if (names.length === 0) {
-                                        namesLine = `${b.attendee_count}명`; // 참석자 데이터가 없으면 fallback
+                                        namesLine = `${b.attendee_count}명`;
                                     } else if (names.length === 1) {
                                         namesLine = names[0];
                                     } else {
-                                        // "A, B"까지만 + 나머지 있으면 …
-                                        // attendee_names_preview가 이미 …를 포함할 수 있으니 보정
                                         const a = names[0];
                                         const b2 = names[1].replace("…", "");
-                                        const hasMore = (b.attendee_names_preview || "").includes("…") || b.attendee_count > 2;
+                                        const hasMore = preview.includes("…") || (b.attendee_count > 2);
                                         namesLine = `${a}, ${b2}${hasMore ? "…" : ""}`;
                                     }
 
                                     return (
                                         <div
-                                            key={b.bung_id}
-                                            className={`chip ${b.is_valid ? "chipValid" : "chipInvalid"}`}
-                                            title={`${time} · ${b.is_valid ? "유효" : "비유효"}${title ? ` · ${title}` : ""} · ${b.attendee_names_preview || ""}`}
+                                            key={isRegular ? `r-${b.meeting_id}` : `b-${b.bung_id}`}
+                                            className={`chip ${isRegular ? "chipRegular" : (b.is_valid ? "chipValid" : "chipInvalid")
+                                                }`}
+                                            title={`${isRegular ? "정기전" : time} ${title} · ${preview || `${b.attendee_count}명`}`}
                                         >
                                             <div className="chipTop">
                                                 <span className="chipIcon">{icon}</span>
-                                                <span className="chipTime">{time}</span>
+                                                {!isRegular && <span className="chipTime">{time}</span>}
                                                 <span className="chipTitle">{title}</span>
                                             </div>
 
@@ -336,6 +348,7 @@ function BungCalendar({ year, monthIndex, calendarDays, onClickDay }) {
           color: #444;
           cursor: pointer;
         }
+        .chipRegular { border-color: #1f6feb; }
 
         @media (max-width: 480px) {
           .cell { min-height: 78px; padding: 6px; border-radius: 12px; }
@@ -417,7 +430,16 @@ export default function BungStatsPage() {
             const res = await fetch(calendarUrl);
             const json = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(json?.detail || json?.error || `calendar failed: ${res.status}`);
-            setCalendarDays(json.calendarDays || {});
+            const raw = json.calendarDays || {};
+            const normalized = {};
+
+            for (const [k, v] of Object.entries(raw)) {
+                const d = new Date(k);
+                if (Number.isNaN(d.getTime())) continue;
+                const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                normalized[key] = v;
+            }
+            setCalendarDays(normalized);
         } catch (e) {
             setCalErr(String(e?.message ?? e));
             setCalendarDays({});
@@ -531,16 +553,20 @@ export default function BungStatsPage() {
 
                     {summary && (
                         <div className="sum">
-                            <div className="sumBox">총 벙: <b>{summary.total_bungs}</b></div>
                             <div className="sumBox">유효 벙: <b>{summary.valid_bungs}</b></div>
+                            <div className="sumBox">정기전: <b>{summary.regular_meetings}</b></div>
+                            <div className="sumBox">합계: <b>{summary.total_bungs}</b></div>
                         </div>
                     )}
+
 
                     <div className="tbl">
                         <div className="tr th">
                             <div>#</div>
                             <div>이름</div>
-                            <div className="r">횟수</div>
+                            <div className="r">유효</div>
+                            <div className="r">정기</div>
+                            <div className="r">합</div>
                         </div>
 
                         {(rankLoading ? [] : rankings).map((r, i) => (
@@ -553,6 +579,8 @@ export default function BungStatsPage() {
                                 <div>{i + 1}</div>
                                 <div className="name">{r.name}</div>
                                 <div className="r">{r.valid_count}</div>
+                                <div className="r">{r.regular_count}</div>
+                                <div className="r" style={{ fontWeight: 900 }}>{r.total_count}</div>
                             </button>
                         ))}
 
@@ -588,7 +616,11 @@ export default function BungStatsPage() {
                 {!dayLoading && dayData?.bungs?.length > 0 && (
                     <div className="list">
                         {dayData.bungs.map((b) => (
-                            <div key={b.bung_id} className={`bungBox ${b.is_valid ? "bValid" : "bInvalid"}`}>
+                            <div
+                                key={isRegular ? `r-${b.meeting_id}` : `b-${b.bung_id}`}
+                                className={`chip ${isRegular ? "chipRegular" : (b.is_valid ? "chipValid" : "chipInvalid")}`}
+                            >
+
                                 <div className="bungHead">
                                     <div className="bungLeft">
                                         <span className="badge">{b.is_valid ? "✓ 유효" : "! 비유효"}</span>
@@ -603,6 +635,117 @@ export default function BungStatsPage() {
 
                                 <div className="names">
                                     {(b.attendees || []).map((a) => a.name).join(", ") || "참석자 없음"}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                {/* ✅ 정기전 결과 (전체 표, 표 영역만 스크롤) */}
+                {dayData?.regular_meetings?.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                        {dayData.regular_meetings.map((rm) => (
+                            <div
+                                key={rm.meeting_id}
+                                style={{
+                                    border: "2px solid #1f6feb",
+                                    borderRadius: 14,
+                                    padding: 10,
+                                    background: "white",
+                                }}
+                            >
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                                    <div style={{ fontWeight: 900 }}>★ 정기전 {rm.meeting_no}회차</div>
+                                    <div style={{ color: "#666", fontSize: 13 }}>{rm.meeting_date}</div>
+                                </div>
+
+                                {/* 표(스크롤 영역) */}
+                                <div
+                                    style={{
+                                        marginTop: 10,
+                                        border: "1px solid #eee",
+                                        borderRadius: 12,
+                                        overflow: "auto",
+                                        maxHeight: 260, // ✅ 표 영역만 스크롤
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            display: "grid",
+                                            gridTemplateColumns: "44px 1fr 46px 46px 46px 60px 60px",
+                                            gap: 8,
+                                            padding: 10,
+                                            background: "#fafafa",
+                                            fontWeight: 900,
+                                            position: "sticky",
+                                            top: 0,
+                                            zIndex: 1,
+                                            minWidth: 520, // 모바일 가로 스크롤 허용
+                                        }}
+                                    >
+                                        <div>#</div>
+                                        <div>이름</div>
+                                        <div style={{ textAlign: "right" }}>G1</div>
+                                        <div style={{ textAlign: "right" }}>G2</div>
+                                        <div style={{ textAlign: "right" }}>G3</div>
+                                        <div style={{ textAlign: "right" }}>합</div>
+                                        <div style={{ textAlign: "right" }}>에버</div>
+                                    </div>
+
+                                    {rm.results.map((r, idx) => (
+                                        <div
+                                            key={r.member_id ?? `${rm.meeting_id}-${idx}`}
+                                            style={{
+                                                display: "grid",
+                                                gridTemplateColumns: "44px 1fr 46px 46px 46px 60px 60px",
+                                                gap: 8,
+                                                padding: 10,
+                                                borderTop: "1px solid #eee",
+                                                alignItems: "center",
+                                                minWidth: 520,
+                                            }}
+                                        >
+                                            <div>{idx + 1}</div>
+                                            <div style={{ fontWeight: 900, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                {r.name}
+                                            </div>
+                                            <div style={{ textAlign: "right" }}>{r.game1 ?? ""}</div>
+                                            <div style={{ textAlign: "right" }}>{r.game2 ?? ""}</div>
+                                            <div style={{ textAlign: "right" }}>{r.game3 ?? ""}</div>
+                                            <div style={{ textAlign: "right" }}>{r.total_pins}</div>
+                                            <div style={{ textAlign: "right" }}>{r.average}</div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* 링크(선택) */}
+                                <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                                    <a
+                                        href={`/regular/${rm.meeting_id}`}
+                                        style={{
+                                            border: "1px solid #ddd",
+                                            borderRadius: 12,
+                                            padding: "10px 12px",
+                                            textDecoration: "none",
+                                            color: "#111",
+                                            background: "white",
+                                        }}
+                                    >
+                                        결과 페이지로 이동
+                                    </a>
+                                    <a
+                                        href={`/regular-admin?meeting_id=${rm.meeting_id}`}
+                                        style={{
+                                            border: "1px solid #1f6feb",
+                                            borderRadius: 12,
+                                            padding: "10px 12px",
+                                            textDecoration: "none",
+                                            color: "#1f6feb",
+                                            background: "white",
+                                            fontWeight: 900,
+                                        }}
+                                    >
+                                        입력/수정
+                                    </a>
                                 </div>
                             </div>
                         ))}
@@ -725,15 +868,15 @@ export default function BungStatsPage() {
 
         .tbl { border: 1px solid #eee; border-radius: 14px; overflow: hidden; }
         .tr {
-          display: grid;
-          grid-template-columns: 50px 1fr 70px;
-          gap: 8px;
-          padding: 10px;
-          border-bottom: 1px solid #eee;
-          background: white;
-          text-align: left;
-          cursor: pointer;
-          border: none;
+        display: grid;
+        grid-template-columns: 50px 1fr 60px 60px 60px;
+        gap: 8px;
+        padding: 10px;
+        border-bottom: 1px solid #eee;
+        background: white;
+        text-align: left;
+        cursor: pointer;
+        border: none;
         }
         .th { background: #fafafa; font-weight: 900; cursor: default; }
         .name { font-weight: 900; }
@@ -770,7 +913,7 @@ export default function BungStatsPage() {
 
         @media (max-width: 480px) {
           .wrap { padding: 12px; }
-          .tr { grid-template-columns: 44px 1fr 60px; padding: 9px; }
+          .tr { grid-template-columns: 44px 1fr 48px 48px 52px; padding: 9px; }
         }
       `}</style>
         </div>

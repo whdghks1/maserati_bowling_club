@@ -1,101 +1,132 @@
 // pages/api/reports/bungs/calendar.js
 import { sql } from "../../../../src/db";
 
-function ensureMonth(month) {
-    const m = String(month || "").trim();
-    if (!/^\d{4}-\d{2}$/.test(m)) return null;
-    return m;
+function buildNamesPreview(names = [], max = 2) {
+  const cleaned = names.filter(Boolean);
+  const head = cleaned.slice(0, max);
+  const more = cleaned.length > max;
+  return head.join(", ") + (more ? "…" : "");
 }
 
 export default async function handler(req, res) {
-    try {
-        if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+  try {
+    if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
-        const { month, from = null, to = null } = req.query;
-        const monthStr = ensureMonth(month);
-        if (!monthStr) return res.status(400).json({ error: "invalid_input", detail: "month(YYYY-MM)가 필요합니다." });
+    const month = String(req.query.month || "").trim(); // YYYY-MM
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: "invalid_input", detail: "month=YYYY-MM 이 필요합니다." });
+    }
 
-        const fromVal = from ? String(from) : null;
-        const toVal = to ? String(to) : null;
+    const monthStart = `${month}-01`; // 문자열로만 유지
 
-        const start = `${monthStr}-01`;
-
-        // 해당 월 + (옵션) from/to 범위 내의 벙만
-        const rows = await sql`
-      with month_bungs as (
+    // ==============
+    // 1) 벙 (bungs)
+    // ==============
+    const bungs = await sql`
+      with rng as (
         select
-          b.id,
-          b.bung_at,
-          b.title,
-          b.center_name,
-          b.note
-        from bungs b
-        where b.bung_at >= ${start}::date
-          and b.bung_at < (${start}::date + interval '1 month')::date
-          and (${fromVal}::timestamptz is null or b.bung_at >= ${fromVal}::timestamptz)
-          and (${toVal}::timestamptz is null or b.bung_at < ${toVal}::timestamptz)
-      ),
-      cnt as (
-        select bung_id, count(*)::int as attendee_count
-        from bung_attendees
-        group by bung_id
-      ),
-      names as (
-        select
-          ba.bung_id,
-          array_agg(m.name order by m.name) as all_names
-        from bung_attendees ba
-        join members m on m.id = ba.member_id
-        group by ba.bung_id
+          date_trunc('month', ${monthStart}::date)::date as start_date,
+          (date_trunc('month', ${monthStart}::date) + interval '1 month' - interval '1 day')::date as end_date
       )
       select
-        mb.id as bung_id,
-        mb.bung_at,
-        mb.title,
-        mb.center_name,
-        coalesce(cnt.attendee_count, 0) as attendee_count,
-        (coalesce(cnt.attendee_count, 0) >= 4) as is_valid,
-        -- 미리보기(최대 3명 + ...), 없으면 null
-        case
-          when names.all_names is null then null
-          when array_length(names.all_names, 1) <= 3
-            then array_to_string(names.all_names, ', ')
-          else array_to_string(names.all_names[1:3], ', ') || '…'
-        end as attendee_names_preview
-      from month_bungs mb
-      left join cnt on cnt.bung_id = mb.id
-      left join names on names.bung_id = mb.id
-      order by mb.bung_at asc
+        (b.bung_at at time zone 'Asia/Seoul')::date as day_key,
+        b.id as bung_id,
+        b.bung_at,
+        b.title,
+        b.center_name,
+        count(ba.id)::int as attendee_count,
+        (count(ba.id) >= 4) as is_valid,
+        array_remove(array_agg(m.name order by m.name), null) as names
+      from bungs b
+      left join bung_attendees ba on ba.bung_id = b.id
+      left join members m on m.id = ba.member_id
+      cross join rng
+      where (b.bung_at at time zone 'Asia/Seoul')::date between rng.start_date and rng.end_date
+      group by b.id
+      order by b.bung_at asc
     `;
 
-        // day map 생성: { "YYYY-MM-DD": [ ... ] }
-        const dayMap = {};
-        for (const r of rows) {
-            const d = new Date(r.bung_at);
-            const yyyy = d.getFullYear();
-            const mm = String(d.getMonth() + 1).padStart(2, "0");
-            const dd = String(d.getDate()).padStart(2, "0");
-            const key = `${yyyy}-${mm}-${dd}`;
-            if (!dayMap[key]) dayMap[key] = [];
-            dayMap[key].push({
-                bung_id: r.bung_id,
-                bung_at: r.bung_at,
-                title: r.title,
-                center_name: r.center_name,
-                attendee_count: Number(r.attendee_count || 0),
-                is_valid: !!r.is_valid,
-                attendee_names_preview: r.attendee_names_preview,
-            });
-        }
+    // =======================
+    // 2) 정기전 (regular_meetings)
+    // =======================
+    const regulars = await sql`
+      with rng as (
+        select
+          date_trunc('month', ${monthStart}::date)::date as start_date,
+          (date_trunc('month', ${monthStart}::date) + interval '1 month' - interval '1 day')::date as end_date
+      )
+      select
+        rm.meeting_date::date as day_key,
+        rm.id as meeting_id,
+        rm.season,
+        rm.meeting_no,
+        rm.meeting_date,
+        count(rr.member_id)::int as attendee_count,
+        array_remove(array_agg(mem.name order by mem.name), null) as names
+      from regular_meetings rm
+      left join regular_results rr on rr.meeting_id = rm.id
+      left join members mem on mem.id = rr.member_id
+      cross join rng
+      where rm.meeting_date is not null
+        and rm.meeting_date between rng.start_date and rng.end_date
+      group by rm.id
+      order by rm.meeting_date asc, rm.meeting_no asc
+    `;
 
-        return res.status(200).json({
-            ok: true,
-            month: monthStr,
-            filter: { from: fromVal, to: toVal },
-            calendarDays: dayMap,
-        });
-    } catch (e) {
-        console.error(e);
-        return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
+    // ============
+    // 3) 캘린더 맵 구성
+    // ============
+    const calendarDays = {};
+
+    for (const b of bungs) {
+      const dayKey = String(b.day_key); // "YYYY-MM-DD"
+      calendarDays[dayKey] = calendarDays[dayKey] || [];
+      calendarDays[dayKey].push({
+        event_type: "bung",
+        bung_id: b.bung_id,
+        bung_at: b.bung_at,
+        title: b.title || "",
+        center_name: b.center_name || "",
+        attendee_count: b.attendee_count,
+        is_valid: !!b.is_valid,
+        attendee_names_preview: buildNamesPreview(b.names || [], 2),
+      });
     }
+
+    for (const r of regulars) {
+      const dayKey = String(r.day_key);
+      calendarDays[dayKey] = calendarDays[dayKey] || [];
+      calendarDays[dayKey].push({
+        event_type: "regular",
+        meeting_id: r.meeting_id,
+        meeting_date: r.meeting_date,
+        title: `정기전 ${r.meeting_no}회차`,
+        attendee_count: r.attendee_count,
+        is_valid: true,
+        attendee_names_preview: buildNamesPreview(r.names || [], 2),
+      });
+    }
+
+    // ✅ 유효벙 -> 비유효벙 -> 정기전 순
+    for (const dayKey of Object.keys(calendarDays)) {
+      calendarDays[dayKey].sort((a, b) => {
+        const rank = (x) => {
+          if (x.event_type === "bung") return x.is_valid ? 0 : 1;
+          if (x.event_type === "regular") return 2;
+          return 9;
+        };
+        const ra = rank(a), rb = rank(b);
+        if (ra !== rb) return ra - rb;
+
+        const ta = a.event_type === "bung" ? new Date(a.bung_at).getTime() : 0;
+        const tb = b.event_type === "bung" ? new Date(b.bung_at).getTime() : 0;
+        return ta - tb;
+      });
+    }
+
+    return res.status(200).json({ calendarDays });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Server error", detail: String(e?.message || e) });
+  }
 }
