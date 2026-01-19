@@ -6,56 +6,109 @@ export default async function handler(req, res) {
         if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
         const member_id = Number(req.query.member_id);
-        const { from = null, to = null } = req.query;
-
         if (!Number.isFinite(member_id)) {
             return res.status(400).json({ error: "invalid_input", detail: "member_id가 필요합니다." });
         }
 
-        const fromVal = from ? String(from) : null;
-        const toVal = to ? String(to) : null;
+        const from = req.query.from || null;
+        const to = req.query.to || null;
 
-        const rows = await sql`
-      with base_bungs as (
-        select
-          b.id,
-          b.bung_at,
-          b.title,
-          b.center_name
-        from bungs b
-        where (${fromVal}::timestamptz is null or b.bung_at >= ${fromVal}::timestamptz)
-          and (${toVal}::timestamptz is null or b.bung_at < ${toVal}::timestamptz)
-      ),
-      cnt as (
-        select bung_id, count(*)::int as attendee_count
-        from bung_attendees
-        group by bung_id
-      )
+        const memberRows = await sql`select id as member_id, name from members where id = ${member_id}`;
+        if (!memberRows[0]) return res.status(404).json({ error: "not_found", detail: "멤버를 찾을 수 없습니다." });
+
+        // (A) 벙 참여(유효/비유효 모두)
+        const bungs = await sql`
       select
-        bb.id as bung_id,
-        bb.bung_at,
-        bb.title,
-        bb.center_name,
-        coalesce(cnt.attendee_count, 0) as attendee_count,
-        (coalesce(cnt.attendee_count, 0) >= 4) as is_valid
-      from base_bungs bb
-      join bung_attendees ba on ba.bung_id = bb.id
-      left join cnt on cnt.bung_id = bb.id
+        b.id as bung_id,
+        b.bung_at,
+        b.title,
+        b.center_name,
+        (select count(*)::int from bung_attendees ba2 where ba2.bung_id = b.id) as attendee_count,
+        ((select count(*) from bung_attendees ba3 where ba3.bung_id = b.id) >= 4) as is_valid
+      from bung_attendees ba
+      join bungs b on b.id = ba.bung_id
       where ba.member_id = ${member_id}
-      order by bb.bung_at desc
+        and (${from}::timestamptz is null or b.bung_at >= ${from}::timestamptz)
+        and (${to}::timestamptz is null or b.bung_at <= ${to}::timestamptz)
+      order by b.bung_at desc
     `;
 
-        return res.status(200).json({
-            ok: true,
-            filter: { from: fromVal, to: toVal },
-            items: rows.map((r) => ({
-                bung_id: r.bung_id,
-                bung_at: r.bung_at,
-                title: r.title,
-                center_name: r.center_name,
-                attendee_count: Number(r.attendee_count || 0),
-                is_valid: !!r.is_valid,
+        // (B) 정기전 참가(regular_results) + 게임점수(regular_games) 조합
+        const regularMeetings = await sql`
+      select
+        rm.id as meeting_id,
+        rm.season,
+        rm.meeting_no,
+        rm.meeting_date
+      from regular_results rr
+      join regular_meetings rm on rm.id = rr.meeting_id
+      where rr.member_id = ${member_id}
+        and rm.meeting_date is not null
+        and (${from}::timestamptz is null or rm.meeting_date >= (${from}::timestamptz at time zone 'Asia/Seoul')::date)
+        and (${to}::timestamptz is null or rm.meeting_date <= (${to}::timestamptz at time zone 'Asia/Seoul')::date)
+      order by rm.meeting_date desc, rm.meeting_no desc
+    `;
+
+        const meetingIds = regularMeetings.map((r) => r.meeting_id);
+
+        let gameRows = [];
+        if (meetingIds.length > 0) {
+            gameRows = await sql`
+        select meeting_id, game_no, score
+        from regular_games
+        where member_id = ${member_id}
+          and meeting_id = any(${meetingIds}::bigint[])
+        order by meeting_id desc, game_no asc
+      `;
+        }
+
+        const scoreByMeeting = new Map();
+        for (const g of gameRows) {
+            const obj = scoreByMeeting.get(g.meeting_id) || { game1: null, game2: null, game3: null };
+            if (g.game_no === 1) obj.game1 = g.score;
+            if (g.game_no === 2) obj.game2 = g.score;
+            if (g.game_no === 3) obj.game3 = g.score;
+            scoreByMeeting.set(g.meeting_id, obj);
+        }
+
+        const regularItems = regularMeetings.map((rm) => {
+            const s = scoreByMeeting.get(rm.meeting_id) || { game1: null, game2: null, game3: null };
+            const total = (s.game1 ?? 0) + (s.game2 ?? 0) + (s.game3 ?? 0);
+            const avg = Math.round((total / 3) * 10) / 10;
+            return {
+                type: "regular",
+                meeting_id: rm.meeting_id,
+                meeting_date: rm.meeting_date,
+                title: `정기전 ${rm.meeting_no}회차`,
+                game1: s.game1,
+                game2: s.game2,
+                game3: s.game3,
+                total_pins: total,
+                average: avg,
+                date_key: String(rm.meeting_date),
+            };
+        });
+
+        const items = [
+            ...bungs.map((b) => ({
+                type: "bung",
+                bung_id: b.bung_id,
+                bung_at: b.bung_at,
+                title: b.title || "",
+                center_name: b.center_name || "",
+                attendee_count: b.attendee_count,
+                is_valid: !!b.is_valid,
             })),
+            ...regularItems,
+        ].sort((a, b) => {
+            const ta = a.type === "bung" ? new Date(a.bung_at).getTime() : new Date(a.meeting_date).getTime();
+            const tb = b.type === "bung" ? new Date(b.bung_at).getTime() : new Date(b.meeting_date).getTime();
+            return tb - ta;
+        });
+
+        return res.status(200).json({
+            member: memberRows[0],
+            items,
         });
     } catch (e) {
         console.error(e);
