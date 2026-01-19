@@ -23,6 +23,9 @@ export default function MainPage() {
             <Link href="/monthly">
               <div className={styles.button}>월간보고서</div>
             </Link>
+            <Link href="/bungs">
+              <div className={styles.button}>벙</div>
+            </Link>
           </div>
         </div>
       </div>
