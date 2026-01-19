@@ -160,7 +160,7 @@ export default function TeamPage() {
       setMembersLoading(true);
       setMembersError("");
       try {
-        const res = await fetch("/api/members");
+        const res = await fetch("/api/members"); 
         if (!res.ok) throw new Error(`members fetch failed: ${res.status}`);
         const data = await res.json();
         const names = Array.isArray(data) ? data.map((r) => r?.name).filter(Boolean) : [];
