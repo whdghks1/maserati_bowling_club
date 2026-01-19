@@ -26,6 +26,9 @@ export default function MainPage() {
             <Link href="/bungs">
               <div className={styles.button}>벙</div>
             </Link>
+            <Link href="/bungs">
+              <div className={styles.button}>벙 통계</div>
+            </Link>
           </div>
         </div>
       </div>
