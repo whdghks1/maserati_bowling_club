@@ -178,6 +178,8 @@ export default function TeamPage() {
     };
   }, []);
 
+  console.log(members)
+
   // 2) localStorage에서 seedCount / seedPools 복원
   useEffect(() => {
     try {
@@ -243,6 +245,12 @@ export default function TeamPage() {
       return next;
     });
   }
+
+  const teamLevelSum = (teamMembers) =>
+    teamMembers.reduce((s, m) => s + (Number(m.level) || 0), 0);
+
+
+
 
   function clearShuffleOnly() {
     if (timerRef.current) {

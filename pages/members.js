@@ -102,7 +102,7 @@ export default function MembersPage() {
     }
 
     return (
-        <div style={{ maxWidth: 900, margin: "0 auto", padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
+        <div className="page">
             <h1 style={{ marginBottom: 6 }}>클럽 인원 관리</h1>
             <p style={{ marginTop: 0, color: "#666" }}>이름은 중복 불가. 레벨은 에버로 자동 계산됩니다.</p>
 
@@ -114,7 +114,7 @@ export default function MembersPage() {
 
             <section style={{ padding: 12, border: "1px solid #eee", borderRadius: 10, marginBottom: 14 }}>
                 <h2 style={{ margin: 0, fontSize: 18 }}>새 인원 추가</h2>
-                <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr auto", gap: 10, marginTop: 10, alignItems: "end" }}>
+                <div className="addGrid">
                     <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         <span>이름</span>
                         <input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} style={{ padding: 10, borderRadius: 8, border: "1px solid #ccc" }} />
@@ -133,6 +133,7 @@ export default function MembersPage() {
                     </label>
                     <button
                         type="button"
+                        className="addButton"
                         disabled={!canSubmit}
                         onClick={createMember}
                         style={{
@@ -142,7 +143,6 @@ export default function MembersPage() {
                             background: canSubmit ? "#111" : "#ddd",
                             color: canSubmit ? "white" : "#333",
                             cursor: canSubmit ? "pointer" : "not-allowed",
-                            minWidth: 120,
                         }}
                     >
                         추가
@@ -157,8 +157,8 @@ export default function MembersPage() {
                 </button>
             </div>
 
-            <div style={{ overflowX: "auto", border: "1px solid #eee", borderRadius: 10 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <div className="tableWrap">
+                <table className="membersTable">
                     <thead>
                         <tr style={{ background: "#fafafa" }}>
                             <th style={{ textAlign: "left", padding: 10, borderBottom: "1px solid #eee" }}>이름</th>
@@ -172,20 +172,20 @@ export default function MembersPage() {
                     <tbody>
                         {rows.map((r) => (
                             <tr key={r.id}>
-                                <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
-                                    <input value={r.name} onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, name: e.target.value } : x)))} style={{ padding: 8, borderRadius: 8, border: "1px solid #ddd", width: "100%" }} />
+                                <td className="nameCell" data-label="이름" style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
+                                    <input className="cellInput nameInput" value={r.name} onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, name: e.target.value } : x)))} />
                                 </td>
-                                <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2", color: "#444" }}>{levelLabel(r.level)}</td>
-                                <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
-                                    <input value={r.average} onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, average: e.target.value } : x)))} inputMode="numeric" style={{ padding: 8, borderRadius: 8, border: "1px solid #ddd", width: 110 }} />
+                                <td className="levelCell" data-label="레벨" style={{ padding: 10, borderBottom: "1px solid #f2f2f2", color: "#444" }}>{levelLabel(r.level)}</td>
+                                <td data-label="에버" style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
+                                    <input className="cellInput numberInput" value={r.average} onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, average: e.target.value } : x)))} inputMode="numeric" />
                                 </td>
-                                <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
-                                    <input value={r.games_played} onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, games_played: e.target.value } : x)))} inputMode="numeric" style={{ padding: 8, borderRadius: 8, border: "1px solid #ddd", width: 110 }} />
+                                <td data-label="참여회수" style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
+                                    <input className="cellInput numberInput" value={r.games_played} onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, games_played: e.target.value } : x)))} inputMode="numeric" />
                                 </td>
-                                <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
-                                    <input value={r.total_pins} onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, total_pins: e.target.value } : x)))} inputMode="numeric" style={{ padding: 8, borderRadius: 8, border: "1px solid #ddd", width: 130 }} />
+                                <td data-label="총핀" style={{ padding: 10, borderBottom: "1px solid #f2f2f2" }}>
+                                    <input className="cellInput totalInput" value={r.total_pins} onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, total_pins: e.target.value } : x)))} inputMode="numeric" />
                                 </td>
-                                <td style={{ padding: 10, borderBottom: "1px solid #f2f2f2", whiteSpace: "nowrap" }}>
+                                <td className="actions" style={{ padding: 10, borderBottom: "1px solid #f2f2f2", whiteSpace: "nowrap" }}>
                                     <button type="button" onClick={() => updateMember(r)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ccc", background: "white", marginRight: 8 }}>
                                         저장
                                     </button>
@@ -209,6 +209,91 @@ export default function MembersPage() {
             <p style={{ marginTop: 14, color: "#666" }}>
                 팀 편성은 <code>/team</code> 페이지에서 “등록된 인원 선택”으로 진행할 거야.
             </p>
+
+            <style jsx>{`
+                .page {
+                    max-width: 900px;
+                    margin: 0 auto;
+                    padding: 16px;
+                    font-family: system-ui, -apple-system, Segoe UI, Roboto;
+                }
+                .addGrid {
+                    display: grid;
+                    grid-template-columns: 1.2fr 1fr 1fr 1fr auto;
+                    gap: 10px;
+                    margin-top: 10px;
+                    align-items: end;
+                }
+                .addGrid :global(input), .cellInput { box-sizing: border-box; min-width: 0; }
+                .addButton { min-width: 120px; }
+                .tableWrap {
+                    overflow-x: auto;
+                    border: 1px solid #eee;
+                    border-radius: 10px;
+                }
+                .membersTable { width: 100%; border-collapse: collapse; }
+                .cellInput {
+                    padding: 8px;
+                    border-radius: 8px;
+                    border: 1px solid #ddd;
+                }
+                .nameInput { width: 100%; min-width: 120px; }
+                .numberInput { width: 110px; }
+                .totalInput { width: 130px; }
+
+                @media (max-width: 640px) {
+                    .page { padding: 12px; }
+                    .addGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                    .addGrid > :first-child { grid-column: 1 / -1; }
+                    .addButton { grid-column: 1 / -1; width: 100%; min-width: 0; }
+
+                    .tableWrap { overflow: visible; border: 0; border-radius: 0; }
+                    .membersTable, .membersTable tbody { display: block; width: 100%; }
+                    .membersTable thead { display: none; }
+                    .membersTable tr {
+                        display: grid;
+                        grid-template-columns: repeat(2, minmax(0, 1fr));
+                        gap: 10px 12px;
+                        width: 100%;
+                        box-sizing: border-box;
+                        padding: 12px;
+                        margin-bottom: 10px;
+                        border: 1px solid #e8e8e8;
+                        border-radius: 14px;
+                        background: #fff;
+                        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+                    }
+                    .membersTable td {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 5px;
+                        min-width: 0;
+                        padding: 0 !important;
+                        border-bottom: 0 !important;
+                    }
+                    .membersTable td:not(.actions)::before {
+                        content: attr(data-label);
+                        color: #777;
+                        font-size: 11px;
+                        font-weight: 700;
+                    }
+                    .nameCell { grid-column: 1 / -1; }
+                    .levelCell {
+                        justify-content: flex-end;
+                        padding-bottom: 9px !important;
+                        font-weight: 800;
+                    }
+                    .cellInput { width: 100%; min-width: 0; font-size: 16px; }
+                    .actions {
+                        grid-column: 1 / -1;
+                        display: grid !important;
+                        grid-template-columns: 1fr 1fr;
+                        gap: 8px !important;
+                        padding-top: 2px !important;
+                    }
+                    .actions button { width: 100%; margin: 0 !important; }
+                }
+            `}</style>
         </div>
     );
 }
