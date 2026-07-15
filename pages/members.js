@@ -206,10 +206,6 @@ export default function MembersPage() {
                 </table>
             </div>
 
-            <p style={{ marginTop: 14, color: "#666" }}>
-                팀 편성은 <code>/team</code> 페이지에서 “등록된 인원 선택”으로 진행할 거야.
-            </p>
-
             <style jsx>{`
                 .page {
                     max-width: 900px;
